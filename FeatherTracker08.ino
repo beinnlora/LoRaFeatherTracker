@@ -1,3 +1,9 @@
+//Code for Adafruit Feather M0 LoRa (RFM_RF95) + GPS featherWing shield
+//transmits device position over LoRa radio every 30 seconds, with GPS-disciplined TDMA to accommodate 60+ devices on one radio channel with 30 second position updates
+
+//GPL Stephen Wilson April 2016
+
+
 //This tracker's device ID. Change for each individual tracker. This determins the transmission slot timing.
 #define DEVICE_ID 1
 //Transmit frequency - adjust as required. Code should work with 868MHz units too.
