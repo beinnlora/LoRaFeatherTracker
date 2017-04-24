@@ -1,0 +1,21 @@
+# traccar starts as service itself
+
+#start rtail for debugging if required. (rtail.org)
+#/home/pi/start_rtail.sh &
+#sleep 5
+
+#start tilestache and background - start one localhost instance and one LAN instance for debugging.
+/home/pi/start_tilestachepitrackerlocal.sh &
+sleep 5
+/home/pi/start_tilestache_192168160.sh &
+sleep 5
+
+#start LoRa gateway
+/home/pi/start_rx.sh &
+
+#start flask timeset and homeset wrapper - on first connecting client the local time is retrieved from the mobile device. Also the 'set at home' button is active for each user to define the home location
+/home/pi/start_flask.sh &
+sleep 2
+
+# start TFT update service
+/home/pi/start_tft.sh &
