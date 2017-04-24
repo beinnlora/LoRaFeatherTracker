@@ -1,5 +1,6 @@
 # LoRaFeatherTracker
-Offline GPS tracker and map server based on Adafruit Feather M0 LoRa radios and Raspberry Pi.
+Offline GPS tracker and map server based on Adafruit Feather M0 LoRa radios and Raspberry Pi. Location map is served to clients over wifi from cached map server, so requires no internet connectivity to work.
+
 
 The code here is currently the Arduino code for the Feather M0, published solely as a favour for someone requesting a few hints. 
 
