@@ -10,6 +10,7 @@ Details on (https://hackaday.io/project/13013-off-grid-gps-race-tracker-client-a
 
 ## Hardware:
 **Mobile units/transmitters:** Adafruit Feather M0 LoRa + Adafruit Feather GPS Shield + 2x18650 LiPo
+
 **Receiver/Map server:** Raspberry Pi 3 + HopeRF RFM95 Uputronics LoRa shield + 128x96 OLED display + USBPico UPS + Wifi USB dongle
 
 ## Software:
