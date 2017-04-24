@@ -3,16 +3,16 @@ Offline GPS tracker and map server based on Adafruit Feather M0 LoRa radios and 
 
 The code here is currently the Arduino code for the Feather M0, published solely as a favour for someone requesting a few hints. 
 
-##Warning:
+## Warning:
 It is exceedingly rough, ready and poorly commented/written in a hurry. This is not how Arduino code should be written or presented!
 
 Details on (https://hackaday.io/project/13013-off-grid-gps-race-tracker-client-and-server)
 
-##Hardware:
+## Hardware:
 **Mobile units/transmitters:** Adafruit Feather M0 LoRa + Adafruit Feather GPS Shield + 2x18650 LiPo
 **Receiver/Map server:** Raspberry Pi 3 + HopeRF RFM95 Uputronics LoRa shield + 128x96 OLED display + USBPico UPS + Wifi USB dongle
 
-##Software:
+## Software:
 **Mobile units/transmitters:** 
   RadioHead RFM95 library for LoRa, TinyGPS++ library for GPS position and TDMA
   
