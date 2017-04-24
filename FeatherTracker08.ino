@@ -1,33 +1,22 @@
+//This tracker's device ID. Change for each individual tracker. This determins the transmission slot timing.
 #define DEVICE_ID 1
+//Transmit frequency - adjust as required. Code should work with 868MHz units too.
 #define RF95_FREQ 434.0
+//Flag for enabling some debug outputs that may affect slot timings / battery life.
 #define debug 1
 
+//LED pin for basic status report
 #define myled 13
+//input pin for receiving pulse-per-second output from GPS board
 #define ppsPin A5
+// output pin to time LoRa transmission code execution speed via oscilloscope. pin goes high at start of transmission function.
 #define sendtriggerpin A4
+
+//libraries - TinyGPS++, RadioHead. Some of the Time alarms are redundant 
 #include <TinyGPS++.h>
-
 #include "dtostrf.c"
-
 #include <TimeLib.h>
 #include <TimeAlarms.h>
-
-// Feather9x_TX
-// -*- mode: C++ -*-
-// Example sketch showing how to create a simple messaging client (transmitter)
-// with the RH_RF95 class. RH_RF95 class does not provide for addressing or
-// reliability, so you should only use RH_RF95 if you do not need the higher
-// level messaging abilities.
-// It is designed to work with the other example Feather9x_RX
-//01
-//02
-//03
-//04 BASIC WORKING VERSION - validpos
-//05 working on GPS time sync
-//06 still working on gps time sync and cleaner structure
-//07 - basic structure and sync timing done - need HW PPS link
-
-
 #include <SPI.h>
 #include <RH_RF95.h>
 
@@ -41,98 +30,96 @@
 #define RFM95_RST 4
 #define RFM95_INT 3
 
-// The TinyGPS++ object
-TinyGPSPlus gps;
-
-//feather batt monitor
-#define VBATPIN A7
 /* for shield
   #define RFM95_CS 10
   #define RFM95_RST 9
   #define RFM95_INT 7
 */
 
+// The TinyGPS++ object
+TinyGPSPlus gps;
 
+//feather batt monitor
+#define VBATPIN A7
 
 // Singleton instance of the radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
-
 
 /////////////
 // VARIABLES
 ////////////
 
-String InputString = "";                     //used in LoRa transmissions
-String Outputstring = "";
-float Tlat, Tlon;
+String InputString = "";                      //used in LoRa transmissions
+String Outputstring = "";                     //used in LoRa transmissions
+float Tlat, Tlon;                             //used in formatting position report
 
-//THIS DEVICE ID
-int devid = DEVICE_ID;
-long setclockevery = 3600; //set clock from GPS every hours
-long setclocklast = 0;
+int devid = DEVICE_ID;                        //THIS DEVICE ID
 
-long getvoltsevery=5000;
-long getvoltslast=0;
-int16_t packetnum = 0;  // packet counter, we increment per xmission
+long setclockevery = 3600;                    // TODO set clock from GPS every x seconds
+long setclocklast = 0;                        //system millis count when clock was last set
 
-long ticktocklast = 0;    //ticktock message timers for serial display to show working
-long ticktockevery = 5000; // 5 second watchdog timer
+long getvoltsevery=5000;                      //get battery voltage every x hours
+long getvoltslast=0;                          //system millis count when the battery was last checked
 
-long previousMillis = 0; //blink timer
-byte validloc = 0;  //valid location fix
-byte validtime = 0;    //valid time fix
+int16_t packetnum = 0;                        // packet counter, we increment per xmission
 
-float vbat = 0;
-int ledstat = 1;
+long ticktockevery = 5000;                    // 5 second watchdog timer fpr debug message
+long ticktocklast = 0;                        //ticktock message timers for serial display to show working
 
-int interval = 500;
-int flasduration = 100;
-int flashcounter = 1;
-int tempinterval = interval;
 
-long ourslot = 0;
-long oursec = 0;
-long oursec2=0; //for testing every 30 second transmits
+long previousMillis = 0;                      //blink timer
+byte validloc = 0;                            //flag for valid location fix
+byte validtime = 0;                           //valid time fix
+
+float vbat = 0;                               //current battery voltage
+int ledstat = 1;                              //LED status
+
+int interval = 500;                           //timing between LED flashes    
+int flasduration = 100;                       //how long one flash is (ms)
+int flashcounter = 1;                         //how many LED flashes counter
+int tempinterval = interval;                  //helper variable for LED flashes
+
 //for working out slot timings
+long ourslot = 0;                             //which millisecond slot to transmit in
+long oursec = 0;                              //how many seconds past the minute is our slot
+long oursec2=0;                               //for testing every 30 second transmits
 
-//watchdog for PPS processing
-long nexttick = 0;
+long nexttick = 0;                            //watchdog for PPS processing
+byte onppsflag=0;                             //interrupt flag on pps
 
-//interrupt flag on pps
-byte onppsflag=0;
-
+///////////////////////////////////////
+// SETUP
+///////////////////////////////////////
 void setup()
 {
-  pinMode(RFM95_RST, OUTPUT);
-  pinMode(myled, OUTPUT);
-  pinMode(VBATPIN, INPUT);
-  pinMode(ppsPin,INPUT);
-  pinMode(sendtriggerpin,OUTPUT);
+  //define hardware pins
+  pinMode(RFM95_RST, OUTPUT);     //LoRa reset pin
+  pinMode(myled, OUTPUT);         //status LED
+  pinMode(VBATPIN, INPUT);        //voltage divider for battery level
+  pinMode(ppsPin,INPUT);          //pulse per second input from GPS
+  pinMode(sendtriggerpin,OUTPUT); //hardware flag for start of LoRa transmission function. For timing loops with 'scope
   
+  // assert LoRa modem
   digitalWrite(RFM95_RST, HIGH);
-  
-  //attach interrupt for pps
-  
-  //wait for serials
+     
+  //wait for serials - onboard Serial for debugging. Serial1 for GPS shield
   while (!Serial);
-
   while (!Serial1);//gps
-
+  
+  //start serials
   Serial.begin(9600);
   Serial1.begin(9600); //GPS
   delay(100);
 
   //CALCLULATE SLOT TIMINGS
   //transmit every 30 seconds
-  oursec = (devid - 1) / 2;
-  oursec2 = oursec+30 ;
-  ourslot = ((devid - 1) % 2) * 500;
+  oursec = (devid - 1) / 2;   //determine how many seconds past the minute our device should transmit at
+  oursec2 = oursec+30 ;       //add additional 'seconds' slot for transmission, 30 seconds after our first 
+  ourslot = ((devid - 1) % 2) * 500;  //how many milliseconds past the 'second' timeslot should we transmit for this device
   
-
+  //for debug
   Serial.print("Devid: "); Serial.println(devid);
-
   Serial.print("slot sec:millis: "); Serial.print(oursec); Serial.print(":"); Serial.println(ourslot);
-
   Serial.println("Feather LoRa TX Test!");
 
   // manual reset
@@ -141,27 +128,29 @@ void setup()
   digitalWrite(RFM95_RST, HIGH);
   delay(10);
 
+  //initialise LoRa modem
   while (!rf95.init()) {
     Serial.println("LoRa radio init failed");
     while (1);
   }
   Serial.println("LoRa radio init OK!");
 
-  // Defaults after init are 434.0MHz, modulation GFSK_Rb250Fd250, +13dbM
+  // Defaults after init are 434.0MHz, modulation GFSK_Rb250Fd250, +13dbM. Check communications.
   if (!rf95.setFrequency(RF95_FREQ)) {
     Serial.println("setFrequency failed");
     while (1);
   }
   Serial.print("Set Freq to: "); Serial.println(RF95_FREQ);
+  
+  //Set LoRa parameters temporarily - just check the board is compatible first: TODO: remove this section
   //Serial.print ("Setting rf95.setModemConfig(RH_RF95::Bw125Cr48Sf4096);");
   //Bw125Cr45Sf128
   Serial.print ("Setting rf95.setModemConfig(RH_RF95::Bw125Cr48Sf4096);");
-  rf95.setModemConfig(RH_RF95::Bw125Cr48Sf4096); //then overwritew
+  rf95.setModemConfig(RH_RF95::Bw125Cr48Sf4096); //then overwrite with other values later on
+  
   ///////////////
-  // MODEM PARAMS
-
-  ////////
-
+  // LoRa MODEM PARAMS
+  ///////////////
   //WE WANT
   //SF10
   //BW250
@@ -176,7 +165,6 @@ void setup()
   //rf95.setModemConfig(RH_RF95::Bw125Cr48Sf512);
   //1d 1e 26
 
-
   const RH_RF95::ModemConfig cfg = {0x88, 0xA4, 0x00};
   rf95.setModemRegisters(&cfg);
   // Defaults after init are 434.0MHz, 13dBm, Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on
@@ -187,15 +175,16 @@ void setup()
   rf95.setTxPower(23, false);
 
   ////////////
-  // SET CLOCK - pause until valid position
+  // SET CLOCK - loop until valid position is received.
   // do some flashing of the LED to show we have no fix yet
-  //while clock not set do
+  //while clock not set do:
   ////////////
 
   while (validtime == 0)
   {
-    //get time - 3 BLINK
+    //get time - LEd should do 3 BLINKs to show it is in SET CLOCK mode
     BlinkLed(myled, 2000, 3);
+    //read from GPS when bytes available
     while (Serial1.available() > 0) {
       if (gps.encode(Serial1.read()))
       {
@@ -228,18 +217,23 @@ void setup()
   }
   delay (2000);
   ///////////////////////
-  ///AWAIT VALID LOCATOIN
+  ///AWAIT VALID LOCATION - loop until obtained
   ///////////////////////
   while (validloc == 0)
   {
+    //LED flash mode now two quick flashes = awaiting valid fix:
     BlinkLed(myled, 1500, 2);
+    //get bytes from GPS 
     while (Serial1.available() > 0) {
       if (gps.encode(Serial1.read()))
       {
         Serial.println ("Getting pos");
         displayInfo();
+        //might as well show the battery voltage, should this be causing the issue of no fix
         getvolts();
         Serial.print ("Vbat: "); Serial.println(vbat);
+        
+        //if we get a valid position, flag as such
         if (gps.location.isValid())
         {
           validloc = 1;
@@ -263,7 +257,7 @@ void setup()
 Serial.println ("Got time and fix. Proceeding");
 
   delay(2000);
-  //some flashes to show ready
+  //some flashes to show ready TODO: tidy up you lazy s*d.
 
   digitalWrite(13, HIGH);
   delay(100);
@@ -287,28 +281,38 @@ Serial.println ("Got time and fix. Proceeding");
   delay(100);
 
   delay(2000);
+  
   //activate PPS interrupt
   attachInterrupt(ppsPin,onmyinterrupt,RISING);
 } //end setup
 
-
+////////////////
+// LOOP
+////////////////
 void loop()
 {
+//if we get a pps interrupt trigger, it sets the onpps flag, so service it
 if( onppsflag==1){
-  //ON PPS
+  //Received a PPS signal from GPS - transmit position if our device's timeslot allows (set in ONPPS funtion)
   
   Serial.print ("ONPPS!");
   //
+  //compare device timeslot to current time, and transmit if needed
   onpps();
+  //reset flag
   onppsflag=0;
 }
-  ///blinking
+  /////////////////////
+  //Not servicing a PPS interrupt - do other tasks
+  /////////////////////
+  // service the LED blinking requirements - single flash is standby mode - all hunky dory.
   if(onppsflag==0){
     BlinkLed(myled, 1000, 1);
   }
-  //1PPS FLASH WHEN RUNNING IN LOOP
+  
   //////////////////////
-  //UPDATE GPS
+  //UPDATE GPS object with latest position if we have data on the GPS serial port.
+  // abort if we receive a PPS interrupt, so that we may service it as fast as possible.
   /////////////////////
   while ((Serial1.available() > 0) &&onppsflag==0){
     if ((gps.encode(Serial1.read())) && onppsflag==0)
@@ -318,10 +322,6 @@ if( onppsflag==1){
     }
   }
 
-
-  //////////////////////
-  //ACTIVITY CYCLE - 
-
   //GET BATTERY LEVEL EVERY 5 seconds
 nexttick=getvoltslast+getvoltsevery;
  if ((millis() > nexttick) && onppsflag==0)
@@ -329,7 +329,6 @@ nexttick=getvoltslast+getvoltsevery;
  getvolts();
  getvoltslast=millis();
  }
- 
  
  
 //////////////////////
@@ -346,14 +345,16 @@ nexttick=getvoltslast+getvoltsevery;
     Serial.println ("Timeout waiting for PPS");
     sendpacket();
     rf95.setHeaderFlags(0);
-
-
   }
 } //end void loop
+
+
 ///////////////
 /// FUNCTIONS
 ///////////////
-void displayInfo()
+
+void displayInfo()  
+//quick serial output of GPS params
 {
   Serial.print(F("Location: "));
   if (gps.location.isValid())
@@ -411,14 +412,18 @@ Serial.print (" ");    Serial.print(F("SATELLITES Fix Age="));
     Serial.println(gps.satellites.value());
  // Serial.println();
 }
-
-void getvolts() {
+/////
+void getvolts() 
+//get the battery voltage from ADC and scale accordingly. NB this will depend on your voltage divider network.
+{
   vbat  = analogRead(VBATPIN);
   vbat *= 2;
   vbat *= 3.3;
   vbat /= 1024;
 }
+
 void addtostring(double lFloat, byte lmin, byte lprecision, String Stuff)
+//construct a LoRa suitable output string.
 {
            //clear array
   InputString = "";
@@ -443,8 +448,9 @@ void addtostring(double lFloat, byte lmin, byte lprecision, String Stuff)
 }
 
 void BlinkLed (int led, int interval, int flashes) {
-  //Serial.println("inblink");
-  //(long) can be omitted if you dont plan to blink led for very long time I think
+  //blink our LED to show current status
+  
+    //(long) can be omitted if you dont plan to blink led for very long time I think
   if (millis() > (previousMillis + tempinterval)) {
 
     previousMillis = millis(); //stores the millis value in the selected array
@@ -490,14 +496,13 @@ void BlinkLed (int led, int interval, int flashes) {
 }
 
 void sendpacket()
+//go and send a LoRa packet
 {
-  digitalWrite(sendtriggerpin,HIGH);
-  Serial.println("Sendpacket function");
+  digitalWrite(sendtriggerpin,HIGH); //output pin high to time function execution speed via oscilloscope
+  Serial.println("Sendpacket function"); //TODO: move into DEBUG only to speed up execution if required
   /////////////////////
-
   // GET VOLTAGE - already got in void loop every x seconds
   //////////////////////
-  
  // getvolts();
   if(debug){Serial.print ("Vbat: "); Serial.println(vbat);}
   //////////////////////
@@ -516,7 +521,7 @@ void sendpacket()
   Outputstring = "";
   //add vBat
     addtostring(vbat, 3, 2, ",");
-  //add /GPS info if valid
+  //add GPS info if valid
   if (gps.location.isValid()) {         // if location is not validloc fix, then only send voltage
   //lat
     addtostring(gps.location.lat(), 5, 5, ",");
@@ -539,13 +544,14 @@ void sendpacket()
     
   } 
     
-    addtostring(0, 0, 0, "*");
+    addtostring(0, 0, 0, "*"); //append * to end for ease of reception. TODO possible checksum a-la /NMEA
   
   //////////////////////
-  //SEND
+  //TRANSMIT
   /////////////////////
   Serial.print ("Sending: "); Serial.println(Outputstring);
   //vbat  = analogRead(VBATPIN);
+  //construct array for holding LoRa payload
   uint8_t data[] = "v.vv,ddd.ddddd,ddd.ddddd,ccc.c,ss.s,aaa.a,aaa*";
   //uint8_t data[]="";
   for (int i = 0; i < Outputstring.length(); i++) {
@@ -571,6 +577,7 @@ void sendpacket()
 
 
 void onpps()
+  //what to do when we receive a pulse-per-second trigger from GPS
 {
   Serial.println("onpps");
   //interrupt driven
@@ -585,10 +592,10 @@ void onpps()
   //reset our pps watchdog
   ticktocklast = millis();
 
-  //GET current GPS object SECOND timer
-  //add 1 to it to give us the real time now (we have received 1pps but the gps object is 1s slow)
+  //GET current GPS object SECOND timestamp (how many seconds past the minute)
+  //add 1 to it to give us the real time now (we have received 1pps but the gps object is now 1s out of date)
   int seconds = gps.time.second();
-  Serial.print ("current seconds: "); Serial.println (seconds);
+  Serial.print ("current seconds: "); Serial.println (seconds);//TODO: shift all serial prints to debug only
   seconds++;
   int nextsec = seconds % 60;
   Serial.print("next seconds: "); Serial.println(nextsec);
@@ -616,6 +623,8 @@ void onpps()
 }
 
 void onmyinterrupt()
+  //interrupy handler for receiving pps signal: just set a flag
+  
 {
   onppsflag=1;
 }
